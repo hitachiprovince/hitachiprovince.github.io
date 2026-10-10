@@ -60,7 +60,7 @@
 
   <script>
     const MAP_SOURCE_FILE = 'roleplay_map_export.json';
-    const FALLBACK_SVG_FILE = 'drawing2.svg';
+    const SVG_FILE = 'drawing2.svg';
 
     const map = L.map('map', {
       crs: L.CRS.Simple,
@@ -148,26 +148,27 @@
     });
 
     // --- Automatic File Fetch and Map Initialization ---
-    fetch(MAP_SOURCE_FILE)
+    // The SVG always comes from its own file; the JSON only holds pins and colors.
+    // "?v=..." stops the browser from reusing an old cached copy.
+    const cacheBust = `?v=${Date.now()}`;
+
+    const svgRequest = fetch(SVG_FILE + cacheBust, { cache: 'no-store' })
       .then(res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
+        if (!res.ok) throw new Error(`Could not load "${SVG_FILE}" (HTTP ${res.status})`);
+        return res.text();
+      });
+
+    const dataRequest = fetch(MAP_SOURCE_FILE + cacheBust, { cache: 'no-store' })
+      .then(res => (res.ok ? res.json() : {}))
+      .catch(() => ({})); // no JSON yet = empty map, that's fine
+
+    Promise.all([svgRequest, dataRequest])
+      .then(([svgText, data]) => {
+        loadMap(data.pins, data.colors, svgText);
       })
-      .then(data => {
-        loadMap(data.pins, data.colors, data.svg);
-      })
-      .catch(err => {
-        console.warn(`Could not load "${MAP_SOURCE_FILE}" (${err.message}). Falling back to "${FALLBACK_SVG_FILE}".`);
-        return fetch(FALLBACK_SVG_FILE)
-          .then(res => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.text();
-          })
-          .then(svgText => loadMap([], {}, svgText))
-          .catch(error => {
-            console.error("Critical error during map initialization:", error);
-            alert("The map could not be loaded.");
-          });
+      .catch(error => {
+        console.error("Critical error during map initialization:", error);
+        alert("The map could not be loaded.");
       });
 
 
@@ -311,25 +312,11 @@
     function exportMapData() {
       if (!svgElement) return alert("Map SVG not loaded yet!");
 
-      const pinsData = getPinsData();
-      const colorsData = currentColors;
-
-      const svgClone = svgElement.cloneNode(true);
-
-      // Strip Leaflet's runtime classes/styles so the exported SVG stays clean
-      svgClone.removeAttribute('class');
-      svgClone.removeAttribute('style');
-
-      for (const [id, color] of Object.entries(colorsData)) {
-        const el = svgClone.querySelector(`#${CSS.escape(id)}`);
-        if (el) el.style.fill = color;
-      }
-
+      // Only pins and colors are exported; the map itself stays in its SVG file
       const exportObject = {
-        version: "1.0",
-        svg: svgClone.outerHTML,
-        pins: pinsData,
-        colors: colorsData
+        version: "2.0",
+        pins: getPinsData(),
+        colors: currentColors
       };
 
       const jsonString = JSON.stringify(exportObject, null, 2);
